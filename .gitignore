@@ -1,0 +1,9 @@
+# Python + poetry
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+poetry.lock
+
+# Env files
+.env
