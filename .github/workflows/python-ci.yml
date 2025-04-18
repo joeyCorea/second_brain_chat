@@ -1,0 +1,39 @@
+name: Python CI
+
+on:
+  push:
+    branches:
+      - main  # Trigger the workflow on push to the main branch
+  pull_request:
+    branches:
+      - main  # Trigger the workflow on pull requests to the main branch
+
+jobs:
+  build:
+    runs-on: ubuntu-latest  # Use the latest Ubuntu environment
+    
+    steps:
+      # Step 1: Checkout the code
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      # Step 2: Set up Python
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'  # Specify Python version (use the version your project requires)
+
+      # Step 3: Install poetry
+      - name: Install poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -  # Install poetry
+
+      # Step 4: Install dependencies with poetry
+      - name: Install dependencies
+        run: |
+          poetry install  # Install dependencies (including dev dependencies, if any)
+
+      # Step 5: Run tests
+      - name: Run tests with pytest
+        run: |
+          poetry run pytest  # Run tests using poetry's virtual environment
