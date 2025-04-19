@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock
-from second_brain_chat.memory_chat import run_chat_turn  # Corrected import path
+from second_brain_chat.memory_chat import run_chat_turn  # Adjust if needed
 
 @pytest.fixture
 def mock_vectorstore():
@@ -31,4 +31,3 @@ def test_run_chat_turn(mock_vectorstore, mock_llm_chain):
     mock_vectorstore.add_texts.assert_called_once_with([user_input])
     mock_vectorstore.similarity_search.assert_called_once_with(user_input, k=3)
     mock_llm_chain.invoke.assert_called_once()
-
