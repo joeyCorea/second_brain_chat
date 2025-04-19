@@ -28,12 +28,16 @@ chat_memory = []
 # Set up environment variables
 load_dotenv()
 
-# Validate LM Studio availability
-try:
-    requests.get(os.getenv("OPENAI_API_BASE"), timeout=2)
-except Exception:
-    print("⚠️ LM Studio server not reachable at", os.getenv("OPENAI_API_BASE"))
-    exit(1)
+# Skip LM Studio validation in CI (GitHub Actions, etc.)
+if os.getenv("CI") == "true":
+    print("⚠️ Skipping LM Studio server validation in CI environment.")
+else:
+    try:
+        requests.get(os.getenv("OPENAI_API_BASE"), timeout=2)
+    except Exception:
+        print("⚠️ LM Studio server not reachable at", os.getenv("OPENAI_API_BASE"))
+        exit(1)
+
 
 # Set up the LLM
 llm = ChatOpenAI(

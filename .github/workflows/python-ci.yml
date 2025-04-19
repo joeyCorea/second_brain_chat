@@ -33,7 +33,11 @@ jobs:
         run: |
           poetry install  # Install dependencies (including dev dependencies, if any)
 
-      # Step 5: Run tests
+      # Step 5: Set CI environment variable
+      - name: Set CI environment variable
+        run: echo "CI=true" >> $GITHUB_ENV
+
+      # Step 6: Run tests
       - name: Run tests with pytest
         run: |
           poetry run pytest  # Run tests using poetry's virtual environment
