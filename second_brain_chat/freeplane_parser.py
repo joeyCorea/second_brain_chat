@@ -84,15 +84,34 @@ def node_to_markdown(node: Node, depth: int = 1) -> str:
         lines.append(node_to_markdown(child, depth + 1))
     return '\n'.join(lines)
 
-
 def chunk_node(node: Node, max_tokens: int = 1000) -> List[str]:
     md = node_to_markdown(node)
     if count_tokens(md) <= max_tokens:
         return [md]
+
     chunks: List[str] = []
+
+    if not node.children:
+        # Leaf node with large content: token-aware splitting
+        import tiktoken
+        enc = tiktoken.get_encoding("cl100k_base")
+        tokens = enc.encode(md)
+        
+        for i in range(0, len(tokens), max_tokens):
+            chunk_tokens = tokens[i:i+max_tokens]
+            chunk_text = enc.decode(chunk_tokens)
+            chunks.append(chunk_text.strip())
+        
+        return chunks
+
+    # Internal node: recurse into children
     for child in node.children:
         chunks.extend(chunk_node(child, max_tokens))
+
     return chunks
+
+
+
 
 if __name__ == '__main__':
     import sys
