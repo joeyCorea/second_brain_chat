@@ -1,6 +1,7 @@
 import pytest
-from second_brain_chat.freeplane_parser import parse_mm, chunk_node, count_tokens
+from second_brain_chat.freeplane_parser import parse_mm, chunk_node, count_tokens, normalize_richcontent
 import tempfile
+import xml.etree.ElementTree as ET
 
 # Utility to generate a large Freeplane XML string with N children under root
 def generate_large_mm(n=20):
@@ -130,3 +131,18 @@ def test_nodes_with_links_and_images():
         output = "\n".join(chunks)
         assert "https://example.com" in output or "[Link]" in output, "Link not represented"
         assert "image.png" in output or "[Image]" in output, "Image ref not surfaced"
+
+def test_normalize_richcontent():
+    rc = ET.fromstring('''<richcontent TYPE="NOTE">
+        <html>
+            <head/><body>
+                Some <b>bold</b> text, a <a href="https://example.com">link</a>, and an image:
+                <img src="image.png"/>
+            </body>
+        </html>
+    </richcontent>''')
+    normalized = normalize_richcontent(rc)
+    assert "Some" in normalized
+    assert "bold" in normalized
+    assert "[Link: https://example.com]" in normalized
+    assert "[Image: image.png]" in normalized

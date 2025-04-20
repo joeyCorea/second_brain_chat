@@ -1,28 +1,12 @@
-import os
-import re
-import argparse
 import xml.etree.ElementTree as ET
 from typing import List, Dict
 from dataclasses import dataclass
 import tiktoken
 
-# Configuration: allow overriding tokenizer encoding via env or CLI
-ENCODING_NAME = os.getenv('TOKEN_ENCODING', 'cl100k_base')
-
-def _get_encoder(name: str):
-    try:
-        return tiktoken.get_encoding(name)
-    except Exception as e:
-        raise ValueError(f"Unable to load encoding '{name}': {e}")
-
-# Helper: count tokens using OpenAI encoding
-def count_tokens(text: str, encoding_name: str = None) -> int:
-    name = encoding_name or ENCODING_NAME
-    enc = _get_encoder(name)
-    return len(enc.encode(text))
-
-# Whitelist of Freeplane attributes to include as metadata
-ALLOWED_METADATA = {'CREATED', 'LINK', 'FOLDED', 'STYLE', 'POSITION', 'MODIFIED'}
+# Token encoder for OpenAI-like models
+token_encoder = tiktoken.get_encoding("cl100k_base")
+def count_tokens(text: str) -> int:
+    return len(token_encoder.encode(text))
 
 @dataclass
 class Node:
@@ -32,102 +16,94 @@ class Node:
     metadata: Dict[str, str]
 
 
+def normalize_richcontent(rc_elem: ET.Element) -> str:
+    """
+    Extracts and flattens richcontent (notes) into a simple string.
+    Links become [Link: URL], images become [Image: path], text is preserved.
+    """
+    parts: List[str] = []
+    # hyperlinks
+    for a in rc_elem.findall('.//a'):
+        href = a.get('href')
+        if href:
+            parts.append(f"[Link: {href}]")
+    # images
+    for img in rc_elem.findall('.//img'):
+        src = img.get('src')
+        if src:
+            parts.append(f"[Image: {src}]")
+    # plaintext inside richcontent
+    for txt in rc_elem.itertext():
+        t = txt.strip()
+        if t and not t.startswith(('http://', 'https://', '[Link:', '[Image:')):
+            parts.append(t)
+    return ' '.join(parts)
+
+
 def parse_node(elem: ET.Element) -> Node:
-    try:
-        node_id = elem.get('ID', '')
-        text = elem.get('TEXT', '')
-        # Sanitize Markdown special characters in text
-        text = escape_markdown(text)
-        # Capture a whitelist of attributes
-        metadata = {k: v for k, v in elem.items() if k in ALLOWED_METADATA}
-        children = [parse_node(child) for child in elem.findall('node')]
-        return Node(id=node_id, text=text, children=children, metadata=metadata)
-    except RecursionError:
-        raise ValueError(f"Node recursion too deep at element with ID={elem.get('ID')}")
-    except Exception as e:
-        raise ValueError(f"Error parsing node ID={elem.get('ID')}: {e}")
+    node_id = elem.get('ID', '')
+    text = elem.get('TEXT', '')
+    # capture standard attributes
+    metadata = {k: v for k, v in elem.items() if k not in ('ID', 'TEXT')}
+    # capture richcontent notes
+    notes = []
+    for rc in elem.findall('richcontent'):
+        if rc.get('TYPE', '').upper() == 'NOTE':
+            notes.append(normalize_richcontent(rc))
+    if notes:
+        metadata['notes'] = ' '.join(notes)
+    # recurse into child nodes
+    children = [parse_node(child) for child in elem.findall('node')]
+    return Node(id=node_id, text=text, children=children, metadata=metadata)
 
 
 def parse_mm(filepath: str) -> Node:
-    """
-    Load a Freeplane .mm file and return the root Node.
-    """
-    try:
-        tree = ET.parse(filepath)
-    except ET.ParseError as e:
-        raise ValueError(f"Failed to parse XML file '{filepath}': {e}")
+    tree = ET.parse(filepath)
     root_elem = tree.getroot().find('node')
     if root_elem is None:
-        raise ValueError(f"No <node> element found in MM file '{filepath}'")
+        raise ValueError("No <node> element found in MM file")
     return parse_node(root_elem)
 
 
-def escape_markdown(text: str) -> str:
-    """
-    Escape Markdown-sensitive characters in the given text.
-    """
-    # characters: \ ` * _ { } [ ] ( ) # + - . !
-    return re.sub(r'([\\`*_\{\}\[\]\(\)#\+\-\.!])', r"\\\1", text)
-
-
 def node_to_markdown(node: Node, depth: int = 1) -> str:
-    """
-    Recursively convert a Node tree into Markdown, using headings for hierarchy.
-    """
     lines: List[str] = []
+    # Heading reflects depth
     prefix = '#' * depth
-    # Heading line
-    lines.append(f"{prefix} {node.text}" if node.text else f"{prefix}")
-    # Metadata as comment
+    heading = f"{prefix} {node.text}" if node.text else prefix
+    lines.append(heading)
+    # metadata comment block
     if node.metadata:
         meta = '; '.join(f"{k}={v}" for k, v in node.metadata.items())
         lines.append(f"<!-- {meta} -->")
-    # Recurse
+    # inline note rendering
+    note = node.metadata.get('notes', '')
+    if note:
+        lines.append(f"> Note: {note}")
+    # child subtrees
     for child in node.children:
         lines.append(node_to_markdown(child, depth + 1))
     return '\n'.join(lines)
 
 
 def chunk_node(node: Node, max_tokens: int = 1000) -> List[str]:
-    """
-    Tree-aware chunking: if a node's full subtree fits under max_tokens, emit it as one chunk;
-    otherwise, recursively chunk its children.
-    """
     md = node_to_markdown(node)
     if count_tokens(md) <= max_tokens:
         return [md]
-    # Otherwise dive into children
     chunks: List[str] = []
     for child in node.children:
         chunks.extend(chunk_node(child, max_tokens))
     return chunks
 
-
-def main():
-    parser = argparse.ArgumentParser(description="Freeplane .mm to Markdown chunker")
-    parser.add_argument('filepath', help='Path to the Freeplane .mm file')
-    parser.add_argument('--max_tokens', type=int, default=1000,
-                        help='Maximum tokens per chunk')
-    parser.add_argument('--encoding', type=str,
-                        help='Optional tokenizer encoding name')
-    args = parser.parse_args()
-
-    if args.encoding:
-        global ENCODING_NAME
-        ENCODING_NAME = args.encoding
-
-    try:
-        root = parse_mm(args.filepath)
-    except ValueError as e:
-        print(f"Error: {e}")
-        exit(1)
-
-    chunks = chunk_node(root, args.max_tokens)
-    for i, chunk in enumerate(chunks, 1):
-        tok_count = count_tokens(chunk)
-        print(f"--- Chunk {i} ({tok_count} tokens) ---")
-        print(chunk)
-        print()
-
 if __name__ == '__main__':
-    main()
+    import sys
+    if len(sys.argv) < 2:
+        print("Usage: python freeplane_parser.py path/to/mindmap.mm [max_tokens]")
+        sys.exit(1)
+    filepath = sys.argv[1]
+    max_toks = int(sys.argv[2]) if len(sys.argv) >= 3 else 1000
+    root = parse_mm(filepath)
+    chunks = chunk_node(root, max_toks)
+    for i, c in enumerate(chunks, 1):
+        print(f"--- Chunk {i} ({count_tokens(c)} tokens) ---")
+        print(c)
+        print()
