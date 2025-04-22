@@ -2,6 +2,9 @@ import xml.etree.ElementTree as ET
 from typing import List, Dict
 from dataclasses import dataclass
 import tiktoken
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Token encoder for OpenAI-like models
 token_encoder = tiktoken.get_encoding("cl100k_base")
@@ -15,6 +18,8 @@ class Node:
     children: List['Node']
     metadata: Dict[str, str]
 
+class MMParseError(Exception):
+    pass
 
 def normalize_richcontent(rc_elem: ET.Element) -> str:
     """
@@ -58,7 +63,11 @@ def parse_node(elem: ET.Element) -> Node:
 
 
 def parse_mm(filepath: str) -> Node:
-    tree = ET.parse(filepath)
+    try:
+        tree = ET.parse(filepath)
+    except ET.ParseError as e:
+        logger.error(f"Failed to parse Freeplane file '%s': %s", filepath, str(e))
+        raise MMParseError(f"Malformed XML in file {filepath}") from e
     root_elem = tree.getroot().find('node')
     if root_elem is None:
         raise ValueError("No <node> element found in MM file")

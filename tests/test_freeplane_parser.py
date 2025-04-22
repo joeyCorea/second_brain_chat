@@ -1,7 +1,8 @@
 import pytest
-from second_brain_chat.freeplane_parser import parse_mm, chunk_node, count_tokens, normalize_richcontent
 import tempfile
 import xml.etree.ElementTree as ET
+import logging
+from second_brain_chat.freeplane_parser import parse_mm, chunk_node, count_tokens, normalize_richcontent, MMParseError
 
 # Utility to generate a large Freeplane XML string with N children under root
 def generate_large_mm(n=20):
@@ -97,16 +98,12 @@ def test_all_nodes_accounted_for():
     with tempfile.NamedTemporaryFile(mode="w+", suffix=".mm", delete=False) as tmp:
         tmp.write(mm_xml)
         tmp.flush()
-
         root = parse_mm(tmp.name)
-
         def count_nodes(n):
             return 1 + sum(count_nodes(c) for c in n.children)
         total_nodes = count_nodes(root)
-
         chunks = chunk_node(root, max_tokens=200)
         headings = [line for c in chunks for line in c.splitlines() if line.startswith("#")]
-
         assert len(headings) / total_nodes >= 0.9, f"Coverage below 90% ({len(headings)} of {total_nodes})"
 
 def test_nodes_with_links_and_images():
@@ -222,6 +219,24 @@ def test_normalize_richcontent_with_junk_html():
     </richcontent>''')
     out = normalize_richcontent(rc)
     assert "Broken" in out
+
+def test_parse_mm_logs_and_raises_on_malformed_xml(caplog):
+    malformed_xml = """<?xml version="1.0"?>
+    <map version="1.0.1">
+        <node TEXT="Root">
+            <richcontent TYPE="NOTE"><html><body><div><b>bold</div></body></html></richcontent>
+        </node>
+    </map>"""
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".mm", delete=False) as f:
+        f.write(malformed_xml)
+        f.flush()
+        mm_path = f.name
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(MMParseError) as excinfo:
+            parse_mm(mm_path)
+    assert "Failed to parse Freeplane file" in caplog.text
+    assert "Malformed XML" in str(excinfo.value)
+
 
 def test_preserves_text_exactly():
     mm_xml = '''<?xml version="1.0"?>
@@ -357,3 +372,20 @@ def test_heading_disambiguation():
         ]
         print(disambiguated_headings)
         assert all("Root" in heading for heading in disambiguated_headings), "Headings are not disambiguated properly"
+
+def test_node_with_no_text_but_richcontent():
+    mm_xml = '''<?xml version="1.0"?>
+    <map version="1.0.1">
+        <node>
+            <richcontent TYPE="NOTE">
+                <html><body>Backup text</body></html>
+            </richcontent>
+        </node>
+    </map>'''
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".mm", delete=False) as tmp:
+        tmp.write(mm_xml)
+        tmp.flush()
+        root = parse_mm(tmp.name)
+        chunks = chunk_node(root, max_tokens=200)
+        joined = "\n".join(chunks)
+        assert "Backup text" in joined
