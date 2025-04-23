@@ -6,3 +6,9 @@ __pycache__/
 
 # Env files
 .env
+
+#not sure how necessar this is as I needed to enter the python interpreter into VSCode manually
+#if anything, it'sa good reference for what that path is
+.vscode
+
+chroma_db*
